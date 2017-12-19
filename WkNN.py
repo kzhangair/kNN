@@ -3,6 +3,7 @@
 from numpy import *
 import operator
 from os import listdir
+import matplotlib.pyplot as plt
 
 #将一个32*32的图像样本转换为1*1024的ndarray
 #参数：样本文件名
@@ -15,19 +16,6 @@ def img2vector(filename):
         for j in range(32):
             returnVect[0, 32*i+j] = int(lineStr[j])
     return returnVect
-
-#马氏距离（Mahalanobis Distance）计算函数
-def MaDistances(inX, dataSet, invCovMat):
-    dataSetSize = dataSet.shape[0]
-    diffMat = tile(inX, (dataSetSize, 1))-dataSet
-    diffMat.shape = (dataSetSize, 1024)
-    sqDistances = []
-    for i in range(dataSetSize):
-        sqDistances.append(diffMat[i].dot(invCovMat).dot(diffMat[i].T))
-    sqDistances = array(sqDistances)
-    distances = sqDistances ** 0.5
-    return distances
-    
     
 #欧式距离（Mahalanobis Distance）计算函数    
 def EuDistances(inX, dataSet):
@@ -57,18 +45,22 @@ def WeightCal3(sortedDistIndicies, distances, i, k):
     kWeightedDist = k-i
     return kWeightedDist
 
-#对输入inX，基于训练样本集(dataSet, labels)用k近邻做出判决
-#距离度量计算函数由参数DistanceCalFunc给出
-#def DistanceCalFunc(inX, dataSet):
-#   ...
-#   return distances(dataSetSize*1的ndarray) 
-#返回：inX的判决结果
-def classify0(inX, dataSet, labels, k, DistanceCalfunc, covInvMat=None):
-    if(DistanceCalfunc.__name__ == "MaDistances"):
-        distances = DistanceCalfunc(inX, dataSet,covInvMat)
-    elif(DistanceCalfunc.__name__ == "EuDistances"):
-        distances = DistanceCalfunc(inX, dataSet)    
+#对输入inX，基于训练样本集(dataSet, labels)用k近邻做出判决, 采用欧氏距离
+#返回：inX的判决结果 1*3的resultList
+def classify0(inX, dataSet, labels, k):
+    resultList = []
+    distances = EuDistances(inX, dataSet)    
     sortedDistIndicies = distances.argsort() #return index
+
+    classCount = {}
+    for i in range(k):
+        voteIlabel = labels[sortedDistIndicies[i]]
+        kWeightedDist = WeightCal1(sortedDistIndicies, distances, i, k)
+        classCount[voteIlabel] = classCount.get(voteIlabel, 0) + kWeightedDist #default:0
+    sortedClassCount = sorted(classCount.iteritems(), \
+                              key=operator.itemgetter(1), reverse=True)
+    resultList.append(sortedClassCount[0][0])
+
     classCount = {}
     for i in range(k):
         voteIlabel = labels[sortedDistIndicies[i]]
@@ -76,7 +68,18 @@ def classify0(inX, dataSet, labels, k, DistanceCalfunc, covInvMat=None):
         classCount[voteIlabel] = classCount.get(voteIlabel, 0) + kWeightedDist #default:0
     sortedClassCount = sorted(classCount.iteritems(), \
                               key=operator.itemgetter(1), reverse=True)
-    return sortedClassCount[0][0]
+    resultList.append(sortedClassCount[0][0])
+
+    classCount = {}
+    for i in range(k):
+        voteIlabel = labels[sortedDistIndicies[i]]
+        kWeightedDist = WeightCal3(sortedDistIndicies, distances, i, k)
+        classCount[voteIlabel] = classCount.get(voteIlabel, 0) + kWeightedDist #default:0
+    sortedClassCount = sorted(classCount.iteritems(), \
+                              key=operator.itemgetter(1), reverse=True)
+    resultList.append(sortedClassCount[0][0])
+
+    return resultList
 
 def handwritingClassTest():
     hwLabels = []
@@ -93,16 +96,44 @@ def handwritingClassTest():
     errorCount = 0.0
     invCovMat = linalg.pinv(cov(trainingMat.T))
     mTest = len(testFileList)
+
+
+    #正确个数
+    correctCntList=[0.0, 0.0, 0.0]
+    #数字5识别的TP值
+    TP5List= [0.0, 0.0, 0.0]
+    #所有判决为5的结果数量 TP+FP
+    P5List = [0.01, 0.01, 0.01]
+    #数字5识别的TN值
+    TN5List = [0.0, 0.0, 0.0]
+    #测试样本中数字5的样本数量
+    Label5Num = 107.0
+    
     for i in range(mTest):
         fileNameStr = testFileList[i]
         fileStr = fileNameStr.split('.')[0]
         classNumStr = int(fileStr.split('_')[0])
         vectorUnderTest = img2vector('testDigits/%s' % fileNameStr)
-        classifierResult = classify0(vectorUnderTest, \
-                                     trainingMat, hwLabels, 3, EuDistances)
-        print "the classifier came back with: %d, the real answer is: %d"\
-              % (classifierResult, classNumStr)
-        if(classifierResult != classNumStr):
-            errorCount += 1.0
-        print "\nthe total number of errors is: %d" % errorCount
-        print "\nthe total error rate is: %f" % (errorCount/float(mTest))
+        classifierResultList = classify0(vectorUnderTest, \
+                                     trainingMat, hwLabels, 3)
+        #正确分类的样本数，TP, TN, TP+FP
+        for s in range(3):
+            if(classifierResultList[s] == classNumStr):
+                correctCntList[s] += 1.0
+            if(classifierResultList[s] == 5):
+                P5List[s] += 1
+                if(classNumStr == 5):
+                    TP5List[s] += 1
+            else:
+                if(classNumStr != 5):
+                    TN5List[s] += 1
+    print("correct rate: %f, %f, %f" %\
+              (correctCntList[0]/float(mTest),correctCntList[1]/float(mTest), correctCntList[2]/float(mTest)))
+    print("precision rate:%f, %f, %f" %\
+               (TP5List[0]/float(P5List[0]),TP5List[1]/float(P5List[1]),TP5List[2]/float(P5List[2])))
+    print("recall rate: %f, %f, %f" %\
+              (TP5List[0]/Label5Num, TP5List[1]/Label5Num, TP5List[2]/Label5Num))
+    print("F1: %f, %f, %f\n" %\
+              ((2*TP5List[0]/float(mTest+TP5List[0]-TN5List[0])), (2*TP5List[1]/float(mTest+TP5List[1]-TN5List[1]))\
+               , (2*TP5List[2]/float(mTest+TP5List[2]-TN5List[2]))))
+    return 
